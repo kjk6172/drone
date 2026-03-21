@@ -1,0 +1,26 @@
+{
+  "llm": {
+    "provider": "ollama",
+    "model": "llama3.1:8b",
+    "endpoint": "http://127.0.0.1:11434/api/generate",
+    "timeout_seconds": 20,
+    "use_rule_fallback": true
+  },
+  "communication": {
+    "host": "127.0.0.1",
+    "port": 5005,
+    "buffer_size": 4096
+  },
+  "drone": {
+    "port": "COM3",
+    "baud": 115200,
+    "takeoff_altitude_m": 2.0
+  },
+  "control": {
+    "linear_speed_mps": 0.3,
+    "vertical_speed_mps": 0.2,
+    "yaw_rate_degps": 20.0,
+    "command_duration_s": 1.0,
+    "follow_distance_near_m": 1.5
+  }
+}
