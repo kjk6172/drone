@@ -24,6 +24,10 @@ def _base_velocity_command() -> Dict[str, float]:
     }
 
 
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
 def map_action_to_command(action: str, state: Dict[str, Any]) -> Dict[str, Any]:
     config = _load_parameters()
     control = config["control"]
@@ -61,8 +65,14 @@ def map_action_to_command(action: str, state: Dict[str, Any]) -> Dict[str, Any]:
         person_position = state.get("person_position", "center")
         distance = state.get("distance", "unknown")
         follow_command = {"command": "velocity", **command}
+        x_center_ratio = state.get("x_center_ratio")
 
-        if person_position == "left":
+        if isinstance(x_center_ratio, (float, int)):
+            x_error = float(x_center_ratio) - 0.5
+            if abs(x_error) > 0.08:
+                normalized_error = _clamp(x_error / 0.5, -1.0, 1.0)
+                follow_command["yaw_rate"] = round(normalized_error * control["yaw_rate_degps"], 2)
+        elif person_position == "left":
             follow_command["yaw_rate"] = -control["yaw_rate_degps"]
         elif person_position == "right":
             follow_command["yaw_rate"] = control["yaw_rate_degps"]

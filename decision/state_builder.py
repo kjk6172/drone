@@ -45,6 +45,10 @@ def build_state(
         "obstacle": bool(obstacle),
     }
 
+    for key in ("x_center_ratio", "box_width_ratio", "bbox", "person_confidence", "source"):
+        if key in person_state:
+            state[key] = person_state[key]
+
     if extra_state:
         state.update(extra_state)
 

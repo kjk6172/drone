@@ -1,7 +1,7 @@
 {
   "llm": {
     "provider": "ollama",
-    "model": "llama3.1:8b",
+    "model": "phi3:3.8b",
     "endpoint": "http://127.0.0.1:11434/api/generate",
     "timeout_seconds": 20,
     "use_rule_fallback": true
@@ -15,6 +15,16 @@
     "port": "COM3",
     "baud": 115200,
     "takeoff_altitude_m": 2.0
+  },
+  "vision": {
+    "camera_index": 0,
+    "frame_width": 640,
+    "frame_height": 480,
+    "left_boundary_ratio": 0.33,
+    "right_boundary_ratio": 0.66,
+    "near_width_ratio": 0.45,
+    "follow_loop_steps": 10,
+    "follow_loop_interval_s": 0.5
   },
   "control": {
     "linear_speed_mps": 0.3,

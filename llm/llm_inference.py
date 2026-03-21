@@ -8,6 +8,16 @@ from urllib import error, request
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "parameters.json"
 PROMPT_PATH = Path(__file__).resolve().with_name("prompt.txt")
+ALLOWED_ACTIONS = {
+    "takeoff",
+    "land",
+    "hover",
+    "move_forward",
+    "move_backward",
+    "turn_left",
+    "turn_right",
+    "follow_person",
+}
 
 
 def _load_config() -> Dict[str, Any]:
@@ -28,32 +38,65 @@ def _extract_json(content: str) -> Dict[str, Any]:
     return json.loads(content[start : end + 1])
 
 
+def _normalize_command(command: str) -> str:
+    return command.lower().strip().replace("_", " ")
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _normalize_llm_output(raw_output: Dict[str, Any]) -> Dict[str, Any]:
+    action = str(raw_output.get("action", "")).strip().lower()
+    if action not in ALLOWED_ACTIONS:
+        raise ValueError(f"Unsupported action from LLM: {action}")
+
+    reason = str(raw_output.get("reason", "")).strip() or "No reason provided."
+    return {
+        "action": action,
+        "reason": reason,
+        "decision_source": "ollama",
+    }
+
+
 def _rule_based_decision(state: Dict[str, Any]) -> Dict[str, str]:
-    command = state.get("user_command", "").lower()
+    command = _normalize_command(state.get("user_command", ""))
     obstacle = state.get("obstacle", False)
     person_detected = state.get("person_detected", False)
 
-    if "land" in command:
-        return {"action": "land", "reason": "User requested landing."}
-    if any(keyword in command for keyword in ("stop", "hover", "wait", "hold")):
-        return {"action": "hover", "reason": "User requested a stop or hold."}
-    if any(keyword in command for keyword in ("take off", "takeoff")):
-        return {"action": "takeoff", "reason": "User requested takeoff."}
+    if _contains_any(command, ("land", "착륙", "내려")):
+        return {"action": "land", "reason": "User requested landing.", "decision_source": "rule_fallback"}
+    if _contains_any(command, ("stop", "hover", "wait", "hold", "멈춰", "정지", "스탑")):
+        return {"action": "hover", "reason": "User requested a stop or hold.", "decision_source": "rule_fallback"}
+    if _contains_any(command, ("take off", "takeoff", "이륙")):
+        return {"action": "takeoff", "reason": "User requested takeoff.", "decision_source": "rule_fallback"}
     if obstacle:
-        return {"action": "hover", "reason": "Obstacle detected, holding position for safety."}
-    if "follow" in command:
+        return {
+            "action": "hover",
+            "reason": "Obstacle detected, holding position for safety.",
+            "decision_source": "rule_fallback",
+        }
+    if _contains_any(command, ("follow", "track", "따라")):
         if person_detected:
-            return {"action": "follow_person", "reason": "User requested following a detected person."}
-        return {"action": "hover", "reason": "No person detected to follow."}
-    if "left" in command:
-        return {"action": "turn_left", "reason": "User requested movement to the left."}
-    if "right" in command:
-        return {"action": "turn_right", "reason": "User requested movement to the right."}
-    if any(keyword in command for keyword in ("forward", "ahead", "front")):
-        return {"action": "move_forward", "reason": "User requested forward movement."}
-    if any(keyword in command for keyword in ("backward", "back")):
-        return {"action": "move_backward", "reason": "User requested backward movement."}
-    return {"action": "hover", "reason": "Command was unclear, defaulting to safe hover."}
+            return {
+                "action": "follow_person",
+                "reason": "User requested following a detected person.",
+                "decision_source": "rule_fallback",
+            }
+        return {"action": "hover", "reason": "No person detected to follow.", "decision_source": "rule_fallback"}
+    if _contains_any(command, ("left", "왼쪽", "좌측", "좌회전")):
+        return {"action": "turn_left", "reason": "User requested movement to the left.", "decision_source": "rule_fallback"}
+    if _contains_any(command, ("right", "오른쪽", "우측", "우회전")):
+        return {"action": "turn_right", "reason": "User requested movement to the right.", "decision_source": "rule_fallback"}
+    if _contains_any(command, ("forward", "ahead", "front", "앞", "전진")):
+        return {"action": "move_forward", "reason": "User requested forward movement.", "decision_source": "rule_fallback"}
+    if _contains_any(command, ("backward", "back", "뒤", "후진")):
+        return {"action": "move_backward", "reason": "User requested backward movement.", "decision_source": "rule_fallback"}
+    return {
+        "action": "hover",
+        "reason": "Command was unclear, defaulting to safe hover.",
+        "decision_source": "rule_fallback",
+    }
 
 
 def _ollama_decision(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -83,7 +126,7 @@ def _ollama_decision(state: Dict[str, Any]) -> Dict[str, Any]:
         body = json.loads(response.read().decode("utf-8"))
 
     response_text = body.get("response", "{}")
-    return _extract_json(response_text)
+    return _normalize_llm_output(_extract_json(response_text))
 
 
 def decide_action(state: Dict[str, Any]) -> Dict[str, Any]:
