@@ -8,29 +8,59 @@
   },
   "communication": {
     "host": "127.0.0.1",
+    "listen_host": "0.0.0.0",
     "port": 5005,
     "buffer_size": 4096
   },
   "drone": {
+    "connection_string": null,
     "port": "COM3",
     "baud": 115200,
-    "takeoff_altitude_m": 2.0
+    "takeoff_altitude_m": 2.0,
+    "heartbeat_timeout_s": 15.0,
+    "guided_mode": "GUIDED",
+    "land_mode": "LAND",
+    "arm_before_takeoff": true,
+    "arm_settle_seconds": 1.0,
+    "setpoint_rate_hz": 5.0
   },
   "vision": {
     "camera_index": 0,
+    "stream_url": null,
+    "person_detector_backend": "yolo",
+    "yolo_model": "yolov8n.pt",
+    "yolo_conf_threshold": 0.35,
+    "yolo_iou_threshold": 0.45,
+    "yolo_fallback_to_hog": true,
+    "track_persist_frames": 2,
+    "track_enable_last_known": true,
     "frame_width": 640,
     "frame_height": 480,
     "left_boundary_ratio": 0.33,
     "right_boundary_ratio": 0.66,
     "near_width_ratio": 0.45,
     "follow_loop_steps": 10,
-    "follow_loop_interval_s": 0.5
+    "follow_loop_interval_s": 0.5,
+    "realtime_loop_steps": 12,
+    "realtime_loop_interval_s": 0.3
   },
   "control": {
     "linear_speed_mps": 0.3,
     "vertical_speed_mps": 0.2,
     "yaw_rate_degps": 20.0,
     "command_duration_s": 1.0,
-    "follow_distance_near_m": 1.5
+    "follow_distance_near_m": 1.5,
+    "track_target_box_width_ratio": 0.35,
+    "track_target_deadzone_ratio": 0.08,
+    "track_target_distance_deadzone_ratio": 0.08,
+    "track_target_yaw_gain": 1.0
+  },
+  "safety": {
+    "max_linear_speed_mps": 0.5,
+    "max_vertical_speed_mps": 0.25,
+    "max_yaw_rate_degps": 30.0,
+    "min_command_duration_s": 0.2,
+    "max_command_duration_s": 1.5,
+    "command_timeout_s": 1.0
   }
 }

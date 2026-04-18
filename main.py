@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any, Dict
 
 from communication.send_command import send_command
-from decision.action_mapper import map_action_to_command
+from decision.action_mapper import map_intent_to_command
 from decision.state_builder import build_state
-from llm.llm_inference import decide_action
+from llm.llm_inference import decide_intent
 from vision.hand_gesture import detect_hand_gesture
 from vision.person_detection import create_video_capture, detect_person, read_person_from_capture
 
@@ -47,39 +47,53 @@ def _resolve_person_result(
     return detect_person()
 
 
-def _run_follow_loop(
+def _should_run_realtime_loop(intent_output: Dict[str, Any]) -> bool:
+    intent = intent_output.get("intent")
+    params = intent_output.get("params", {})
+    if not isinstance(params, dict):
+        params = {}
+
+    if intent == "track_target":
+        return bool(params.get("continuous", True))
+    return False
+
+
+def _run_realtime_control_loop(
     user_command: str,
+    intent_output: Dict[str, Any],
     obstacle: bool,
     send: bool,
     mock_person: Dict[str, float] | None,
     capture: Any,
-    follow_steps: int,
-    follow_interval_s: float,
+    control_steps: int,
+    control_interval_s: float,
+    target_host: str | None = None,
+    target_port: int | None = None,
 ) -> list[Dict[str, Any]]:
     trace: list[Dict[str, Any]] = []
 
-    for step in range(follow_steps):
+    for step in range(control_steps):
         person_result = _resolve_person_result(mock_person=mock_person, capture=capture)
-        follow_state = _build_state_from_inputs(
+        loop_state = _build_state_from_inputs(
             user_command=user_command,
             person_result=person_result,
             obstacle=obstacle,
         )
-        follow_command = map_action_to_command("follow_person", follow_state)
+        loop_command = map_intent_to_command(intent_output, loop_state)
 
         if send:
-            send_command(follow_command)
+            send_command(loop_command, host=target_host, port=target_port)
 
         trace.append(
             {
                 "step": step + 1,
-                "state": follow_state,
-                "drone_command": follow_command,
+                "state": loop_state,
+                "drone_command": loop_command,
             }
         )
 
-        if step < follow_steps - 1:
-            time.sleep(follow_interval_s)
+        if step < control_steps - 1:
+            time.sleep(control_interval_s)
 
     return trace
 
@@ -91,15 +105,26 @@ def run_pipeline(
     send: bool = False,
     use_camera: bool = False,
     camera_index: int | None = None,
-    follow_steps: int | None = None,
-    follow_interval_s: float | None = None,
+    stream_url: str | None = None,
+    control_steps: int | None = None,
+    control_interval_s: float | None = None,
+    target_host: str | None = None,
+    target_port: int | None = None,
 ) -> Dict[str, Any]:
     config = _load_runtime_config()["vision"]
     resolved_camera_index = config["camera_index"] if camera_index is None else camera_index
-    resolved_follow_steps = config["follow_loop_steps"] if follow_steps is None else follow_steps
-    resolved_follow_interval = config["follow_loop_interval_s"] if follow_interval_s is None else follow_interval_s
+    resolved_control_steps = (
+        config.get("realtime_loop_steps", config.get("follow_loop_steps", 10))
+        if control_steps is None
+        else control_steps
+    )
+    resolved_control_interval = (
+        config.get("realtime_loop_interval_s", config.get("follow_loop_interval_s", 0.5))
+        if control_interval_s is None
+        else control_interval_s
+    )
 
-    capture = create_video_capture(resolved_camera_index) if use_camera else None
+    capture = create_video_capture(resolved_camera_index, stream_url=stream_url) if use_camera else None
 
     try:
         person_result = _resolve_person_result(mock_person=mock_person, capture=capture)
@@ -108,31 +133,34 @@ def run_pipeline(
             person_result=person_result,
             obstacle=obstacle,
         )
-        llm_output = decide_action(state)
-        drone_command = map_action_to_command(llm_output["action"], state)
+        intent_output = decide_intent(state)
+        drone_command = map_intent_to_command(intent_output, state)
 
         result = {
             "state": state,
-            "llm_output": llm_output,
+            "intent_output": intent_output,
             "drone_command": drone_command,
         }
 
-        if llm_output["action"] == "follow_person" and resolved_follow_steps > 0:
-            follow_trace = _run_follow_loop(
+        if _should_run_realtime_loop(intent_output) and resolved_control_steps > 0:
+            control_trace = _run_realtime_control_loop(
                 user_command=user_command,
+                intent_output=intent_output,
                 obstacle=obstacle,
                 send=send,
                 mock_person=mock_person,
                 capture=capture,
-                follow_steps=resolved_follow_steps,
-                follow_interval_s=resolved_follow_interval,
+                control_steps=resolved_control_steps,
+                control_interval_s=resolved_control_interval,
+                target_host=target_host,
+                target_port=target_port,
             )
-            result["follow_trace"] = follow_trace
-            if follow_trace:
-                result["state"] = follow_trace[-1]["state"]
-                result["drone_command"] = follow_trace[-1]["drone_command"]
+            result["control_trace"] = control_trace
+            if control_trace:
+                result["state"] = control_trace[-1]["state"]
+                result["drone_command"] = control_trace[-1]["drone_command"]
         elif send:
-            send_command(drone_command)
+            send_command(drone_command, host=target_host, port=target_port)
 
         return result
     finally:
@@ -148,6 +176,11 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--camera", action="store_true", help="Use a live camera frame for person detection.")
     parser.add_argument("--camera-index", type=int, default=config["camera_index"], help="Camera index for OpenCV capture.")
     parser.add_argument(
+        "--stream-url",
+        default=config.get("stream_url"),
+        help="Optional RTSP/UDP/HTTP video stream URL. If set, it overrides --camera-index.",
+    )
+    parser.add_argument(
         "--position",
         choices=["left", "center", "right"],
         default="center",
@@ -162,17 +195,37 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--obstacle", action="store_true", help="Simulate obstacle detection.")
     parser.add_argument("--send", action="store_true", help="Send the resulting command over socket.")
     parser.add_argument(
-        "--follow-steps",
-        type=int,
-        default=config["follow_loop_steps"],
-        help="Number of follow-control cycles to run after the LLM selects follow_person.",
+        "--target-host",
+        default=None,
+        help="Override command target host. Useful when sending from laptop to Raspberry Pi.",
     )
     parser.add_argument(
-        "--follow-interval",
-        type=float,
-        default=config["follow_loop_interval_s"],
-        help="Delay in seconds between follow-control cycles.",
+        "--target-port",
+        type=int,
+        default=None,
+        help="Override command target port.",
     )
+
+    default_steps = config.get("realtime_loop_steps", config.get("follow_loop_steps", 10))
+    default_interval = config.get("realtime_loop_interval_s", config.get("follow_loop_interval_s", 0.5))
+
+    parser.add_argument(
+        "--control-steps",
+        type=int,
+        default=default_steps,
+        help="Number of real-time control cycles for continuous intents like track_target.",
+    )
+    parser.add_argument(
+        "--control-interval",
+        type=float,
+        default=default_interval,
+        help="Delay in seconds between control cycles.",
+    )
+
+    # Backward-compatible aliases
+    parser.add_argument("--follow-steps", type=int, dest="control_steps", help=argparse.SUPPRESS)
+    parser.add_argument("--follow-interval", type=float, dest="control_interval", help=argparse.SUPPRESS)
+
     return parser
 
 
@@ -200,7 +253,10 @@ if __name__ == "__main__":
         send=args.send,
         use_camera=args.camera,
         camera_index=args.camera_index,
-        follow_steps=args.follow_steps,
-        follow_interval_s=args.follow_interval,
+        stream_url=args.stream_url,
+        control_steps=args.control_steps,
+        control_interval_s=args.control_interval,
+        target_host=args.target_host,
+        target_port=args.target_port,
     )
     print(json.dumps(output, ensure_ascii=False, indent=2))
